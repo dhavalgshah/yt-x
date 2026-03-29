@@ -211,6 +211,9 @@ load_config() {
 send_notification() {
   echo "$1" >&2 && sleep "$NOTIFICATION_DURATION"
 }
+notify_info() {
+  echo "$1" >&2
+}
 update_script() {
   yt_x_path="$(command -v yt-x)"
   if [ -z "$yt_x_path" ]; then
@@ -230,10 +233,10 @@ update_script() {
   update=$(curl -s "https://raw.githubusercontent.com/Benexl/yt-x/refs/heads/master/yt-x" || byebye 1)
   update="$(printf '%s\n' "$update" | diff -u "$yt_x_path" - 2>/dev/null)"
   if [ -z "$update" ]; then
-    send_notification "Script is up to date :)"
+    notify_info "Script is up to date :)"
   else
     if printf '%s\n' "$update" | patch "$yt_x_path" -; then
-      send_notification "Script has been updated!"
+      notify_info "Script has been updated!"
     else
       send_notification "Can't update for some reason!"
     fi
@@ -983,7 +986,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
           yt_dlp_cmd=("yt-dlp" "$url" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         fi
-        send_notification "Completed downloading of $playlist_name"
+        notify_info "Completed downloading of $playlist_name"
         ;;
       "Download All (Audio Only)")
         playlist_name=$(prompt "Name of the playlist" "$playlist_title")
@@ -995,7 +998,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
           yt_dlp_cmd=("yt-dlp" "$url" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         fi
-        send_notification "Completed downloading of $playlist_name"
+        notify_info "Completed downloading of $playlist_name"
         ;;
       Listen)
         printf "${MAGENTA}Now Listening to:${RESET} %s\n" "$title"
@@ -1170,7 +1173,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
             \"playlistWatchUrl\": \"https://www.youtube.com/watch?list=$playlist_id\"
           }
         "
-        echo "$custom_playlists" | jq ".+=[$custom_playlist]" >"$CLI_CONFIG_DIR/custom_playlists.json" && send_notification "successfully added to custom playlists" || send_notification "Failed to add to custom playlists"
+        echo "$custom_playlists" | jq ".+=[$custom_playlist]" >"$CLI_CONFIG_DIR/custom_playlists.json" && notify_info "successfully added to custom playlists" || send_notification "Failed to add to custom playlists"
         ;;
       UnSave)
         current_liked_videos='{"entries":[]}'
@@ -1200,12 +1203,12 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
       Download)
         video_url=$(echo "$video" | jq '.url' -r)
         yt-dlp "$video_url" --output "$DOWNLOAD_DIRECTORY/videos/individual/%(channel)s/%(title)s.%(ext)s" $PREFERRED_BROWSER
-        send_notification "Completed downloading of $title"
+        notify_info "Completed downloading of $title"
         ;;
       "Download (Audio Only)")
         video_url=$(echo "$video" | jq '.url' -r)
         yt-dlp "$video_url" -x -f 'bestaudio' --audio-format mp3 --output "$DOWNLOAD_DIRECTORY/audio/individual/%(channel)s/%(title)s.%(ext)s" $PREFERRED_BROWSER
-        send_notification "Completed downloading of $title"
+        notify_info "Completed downloading of $title"
         ;;
       Back | "")
         break
@@ -1375,7 +1378,7 @@ ${RED}󰈆${RESET}  Exit
       fi
 
       id=$(echo "$channel" | jq '.id' -r)
-      echo "$_channels_data" | jq "{\"entries\":[.entries[] | select(.id != \"$id\")]}|.entries+=[$channel]" >"$CLI_CONFIG_DIR/subscriptions.json" && send_notification "successfully subscribed" || send_notification "Failed to subscribe to channel"
+      echo "$_channels_data" | jq "{\"entries\":[.entries[] | select(.id != \"$id\")]}|.entries+=[$channel]" >"$CLI_CONFIG_DIR/subscriptions.json" && notify_info "successfully subscribed" || send_notification "Failed to subscribe to channel"
       ;;
     Exit)
       byebye
@@ -1642,7 +1645,7 @@ ${RED}󰈆${RESET}  Exit
             \"cmd\": \"$custom_yt_dlp_cmd\"
           }
         "
-        echo "$custom_cmds" | jq ".+=[$custom_cmd]" >"$F_CUSTOM_CMDS" && send_notification "successfully added to custom cmds" || send_notification "Failed to add to custom cmds"
+        echo "$custom_cmds" | jq ".+=[$custom_cmd]" >"$F_CUSTOM_CMDS" && notify_info "successfully added to custom cmds" || send_notification "Failed to add to custom cmds"
 
         echo Running new custom command...
         search_results=$(
@@ -1748,7 +1751,7 @@ ${RED}󰈆${RESET}  Exit
           echo "Syncing subscriptions..."
           [ -n "$PREFERRED_BROWSER" ] && channels_data=$(yt-dlp "https://www.youtube.com/feed/channels" --flat-playlist $PREFERRED_BROWSER -J) || send_notification "Failed to fetch subscriptions (please set preferred browser in config"
           download_preview_images "$channels_data" "https:"
-          [ -n "$channels_data" ] && ! [ "$channels_data" = "null" ] && echo "$channels_data" >"$CLI_CONFIG_DIR/subscriptions.json" && send_notification "successfully imported yt subs" || send_notification "Failed to fetch subscriptions"
+          [ -n "$channels_data" ] && ! [ "$channels_data" = "null" ] && echo "$channels_data" >"$CLI_CONFIG_DIR/subscriptions.json" && notify_info "successfully imported yt subs" || send_notification "Failed to fetch subscriptions"
         else
           send_notification "Sync cancelled"
         fi
