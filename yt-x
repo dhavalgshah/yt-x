@@ -91,7 +91,7 @@ PLAYER: $PLAYER
 
 # the browser to use to extract cookies from
 # this is used to by yt-dlp to access content that would require login
-PREFERRED_BROWSER: $(echo "$PREFERRED_BROWSER" | sed 's/--cookies-from-browser //g')
+PREFERRED_BROWSER: ${PREFERRED_BROWSER[1]:-none}
 
 # the number of results to get from yt-dlp
 NO_OF_SEARCH_RESULTS: $NO_OF_SEARCH_RESULTS
@@ -157,8 +157,10 @@ load_config() {
     MPV_CMD="mpv"  # fallback
   fi
 
-  PREFERRED_BROWSER="$(find_config_option "PREFERRED_BROWSER")"
-  [ -n "$PREFERRED_BROWSER" ] && PREFERRED_BROWSER="--cookies-from-browser $PREFERRED_BROWSER"
+  PREFERRED_BROWSER=()
+  _pb_val="$(find_config_option "PREFERRED_BROWSER")"
+  [ -n "$_pb_val" ] && PREFERRED_BROWSER=(--cookies-from-browser "$_pb_val")
+  unset _pb_val
 
   NO_OF_SEARCH_RESULTS="$(find_config_option "NO_OF_SEARCH_RESULTS")"
   [ -z "$NO_OF_SEARCH_RESULTS" ] && NO_OF_SEARCH_RESULTS=30
@@ -391,7 +393,7 @@ build_m3u8_playlist() {
   local src_url="$1" dest="$2"
   local _mix_data _entry _title _url
   # shellcheck disable=SC2086
-  _mix_data=$(yt-dlp "$src_url" --flat-playlist -J $PREFERRED_BROWSER)
+  _mix_data=$(yt-dlp "$src_url" --flat-playlist -J "${PREFERRED_BROWSER[@]}")
   [ -z "$_mix_data" ] && send_notification "Failed to get playlist data" && return 1
   echo '#EXTM3U' > "$dest"
   while IFS= read -r _entry; do
@@ -650,10 +652,10 @@ prompt() {
 }
 run_yt_dlp() {
   if command -v "gum" >/dev/null 2>&1; then
-    gum spin --show-output -- yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END" $PREFERRED_BROWSER || send_notification "Failed to fetch data : ("
+    gum spin --show-output -- yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END" "${PREFERRED_BROWSER[@]}" || send_notification "Failed to fetch data : ("
   else
     echo "Loading..." >/dev/stderr
-    yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END" $PREFERRED_BROWSER || send_notification "Failed to fetch data : ("
+    yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END" "${PREFERRED_BROWSER[@]}" || send_notification "Failed to fetch data : ("
   fi
 }
 
@@ -934,10 +936,10 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
       "Download All")
         playlist_name=$(prompt "Name of the playlist" "$playlist_title")
         if [ -n "$urlForAll" ]; then
-          yt_dlp_cmd=("yt-dlp" "$urlForAll" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
+          yt_dlp_cmd=("yt-dlp" "$urlForAll" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}")
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         else
-          yt_dlp_cmd=("yt-dlp" "$url" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
+          yt_dlp_cmd=("yt-dlp" "$url" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}")
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         fi
         notify_info "Completed downloading of $playlist_name"
@@ -946,10 +948,10 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         playlist_name=$(prompt "Name of the playlist" "$playlist_title")
 
         if [ -n "$urlForAll" ]; then
-          yt_dlp_cmd=("yt-dlp" "$urlForAll" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
+          yt_dlp_cmd=("yt-dlp" "$urlForAll" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}")
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         else
-          yt_dlp_cmd=("yt-dlp" "$url" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
+          yt_dlp_cmd=("yt-dlp" "$url" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}")
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         fi
         notify_info "Completed downloading of $playlist_name"
@@ -1185,10 +1187,10 @@ get_channels_data() {
 playlists_explorer() {
   playlist_results=$(
     if command -v "gum" >/dev/null 2>&1; then
-      gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER $PLAYLISTS_EXTRA_ARGS
+      gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS
     else
       echo "Loading..." >/dev/stderr
-      yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER $PLAYLISTS_EXTRA_ARGS
+      yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS
     fi
   )
   playlist_results=$(echo "$playlist_results" | jq "
@@ -1501,10 +1503,10 @@ ${RED}󰈆${RESET}  Exit
           clear
           [ -z "$search_term" ] && search_term=$(prompt "What channel would you like to explore?") && url="https://www.youtube.com/results?search_query=$search_term&sp=EgIQAg%253D%253D" && channels_data=$(
             if command -v "gum" >/dev/null 2>&1; then
-              gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+              gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
             else
               echo "Loading..." >/dev/stderr
-              yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+              yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
             fi
           ) && download_preview_images "$channels_data" "https:"
           clear
