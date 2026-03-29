@@ -766,13 +766,17 @@ playlist_explorer() {
   SHELL="bash"
   DOWNLOAD_IMAGES=0
   while true; do
-    [ "$DOWNLOAD_IMAGES" = 0 ] &&
+    if [ "$DOWNLOAD_IMAGES" = 0 ]; then
       search_results=$(echo "$search_results" | jq "
           .entries=(.entries 
           | to_entries
           | map(.value.title=\"\(.key+1|tostring| if (.|length) < 2 then \"0\" + . else . end) \"+.value.title) 
           |map(.value))
-          ") && ! [ "$ENABLE_PREVIEW" = "true" ] || ! [ "$PREFERRED_SELECTOR" = "fzf" ] && DOWNLOAD_IMAGES=1
+          ")
+      if ! [ "$ENABLE_PREVIEW" = "true" ] || ! [ "$PREFERRED_SELECTOR" = "fzf" ]; then
+        DOWNLOAD_IMAGES=1
+      fi
+    fi
     titles=$(echo "$search_results" | jq '.entries[].title' -r 2>/dev/null)
     [ "$ENABLE_PREVIEW" = "true" ] && [ "$PREFERRED_SELECTOR" = "fzf" ] && [ "$DOWNLOAD_IMAGES" = 0 ] && download_preview_images "$search_results" "" && DOWNLOAD_IMAGES=1
     export search_results SHELL
