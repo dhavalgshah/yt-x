@@ -4,6 +4,7 @@
 # Covers issue #15
 
 setup() {
+  bats_require_minimum_version 1.5.0
   export YT_X_TEST_MODE=1
   export HOME="${BATS_TMPDIR}/home_$$"
   mkdir -p "$HOME/.config/yt-x" "$HOME/.cache/yt-x"
@@ -54,10 +55,15 @@ _stub_editor() {
 
 @test "#15: open_in_editor falls back to open (macOS) when xdg-open absent" {
   unset PREFERRED_EDITOR EDITOR
-  # Hide xdg-open
-  xdg-open() { return 127; }; export -f xdg-open
+  # command -v finds bash functions, so we must both unset any xdg-open function
+  # AND shadow the real binary by prepending an empty dir to PATH.
+  unset -f xdg-open 2>/dev/null || true
+  local _shadow _saved_path
+  _shadow="${BATS_TMPDIR}/shadow_$$"
+  _saved_path="$PATH"
+  mkdir -p "$_shadow"
   _stub_editor "open"
-  open_in_editor "/tmp/test.conf"
+  PATH="$_shadow" open_in_editor "/tmp/test.conf"
   grep -q "open /tmp/test.conf" "$STUB_CALLS_FILE"
 }
 
@@ -65,7 +71,7 @@ _stub_editor() {
   unset PREFERRED_EDITOR EDITOR
   xdg-open() { return 127; }; export -f xdg-open
   open()     { return 127; }; export -f open
-  run open_in_editor "/tmp/test.conf"
+  run -127 open_in_editor "/tmp/test.conf"
   [ "$status" -ne 0 ]
 }
 

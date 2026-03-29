@@ -28,12 +28,16 @@ setup() {
 
 teardown() {
   rm -rf "${BATS_TMPDIR}/home_$$"
+  unset _STUB_PLAYLIST_JSON
 }
 
-# Stub yt-dlp to return our mock JSON for any URL
+# Stub yt-dlp to return our mock JSON for any URL.
+# Uses a global export because bash functions don't close over locals —
+# by the time the exported yt-dlp() is invoked, the caller's local
+# variables are out of scope.
 _stub_yt_dlp_playlist() {
-  local json="$1"
-  yt-dlp() { echo "$json"; }
+  export _STUB_PLAYLIST_JSON="$1"
+  yt-dlp() { echo "$_STUB_PLAYLIST_JSON"; }
   export -f yt-dlp
 }
 
