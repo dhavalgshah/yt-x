@@ -91,7 +91,7 @@ PLAYER: $PLAYER
 
 # the browser to use to extract cookies from
 # this is used to by yt-dlp to access content that would require login
-PREFERRED_BROWSER: $(echo "$PREFERRED_BROWSER" | sed 's/--cookies-from-browser //g')
+PREFERRED_BROWSER: ${PREFERRED_BROWSER[1]:-none}
 
 # the number of results to get from yt-dlp
 NO_OF_SEARCH_RESULTS: $NO_OF_SEARCH_RESULTS
@@ -157,8 +157,10 @@ load_config() {
     MPV_CMD="mpv"  # fallback
   fi
 
-  PREFERRED_BROWSER="$(find_config_option "PREFERRED_BROWSER")"
-  [ -n "$PREFERRED_BROWSER" ] && PREFERRED_BROWSER="--cookies-from-browser $PREFERRED_BROWSER"
+  PREFERRED_BROWSER=()
+  _pb_val="$(find_config_option "PREFERRED_BROWSER")"
+  [ -n "$_pb_val" ] && PREFERRED_BROWSER=(--cookies-from-browser "$_pb_val")
+  unset _pb_val
 
   NO_OF_SEARCH_RESULTS="$(find_config_option "NO_OF_SEARCH_RESULTS")"
   [ -z "$NO_OF_SEARCH_RESULTS" ] && NO_OF_SEARCH_RESULTS=30
@@ -387,11 +389,9 @@ generate_sha256() {
 
 build_m3u8_playlist() {
   # $1 = source URL, $2 = output .m3u8 file path
-  # TODO(#19): PREFERRED_BROWSER needs to become an array; keep unquoted for now
   local src_url="$1" dest="$2"
   local _mix_data _entry _title _url
-  # shellcheck disable=SC2086
-  _mix_data=$(yt-dlp "$src_url" --flat-playlist -J $PREFERRED_BROWSER)
+  _mix_data=$(yt-dlp "$src_url" --flat-playlist -J "${PREFERRED_BROWSER[@]}")
   [ -z "$_mix_data" ] && send_notification "Failed to get playlist data" && return 1
   echo '#EXTM3U' > "$dest"
   while IFS= read -r _entry; do
@@ -404,77 +404,46 @@ build_m3u8_playlist() {
 
 generate_text_preview() {
   [ -z "$search_results" ] && return 1
-  ids="$(echo "$1" | jq '.entries[].id' -r 2>/dev/null)"
 
-  lines="$(echo "$ids" | wc -l)"
-  for i in $(seq 1 "$lines"); do
-    video=$(echo "$1" | jq ".entries[$((i - 1))]")
-    title=$(echo "$video" | jq ".title" -r | sed 's/"/\\\\"/g;s/%/%%/g;s/\$/\\\\$/g;s/^.. //g')
-    id=$(echo "$video" | jq '.id' -r)
-    preview_image=$(echo "$video" | jq '.thumbnails[-1].url' -r | generate_sha256)
+  local _entry _preview_script_path
+  local id raw_title display_title preview_url view_count live_status description channel duration_secs timestamp_val
+  local preview_image relative_timestamp timestamp duration
 
-    view_count=$(
-      echo "$video" | jq -r '
-      .view_count
-      |tostring
-      |split("")
-      |reverse
-      |join("")
-      |gsub("(?<thousands>[0-9]{3})(?=[0-9])"; "\(.thousands),")
-      |split("")
-      |reverse
-      |join("")
-      '
+  # Stream entries as compact JSON (one per line), then extract ALL fields
+  # in a single jq call per entry — reduces ~9 jq forks/entry to 1.
+  # Fields joined with ASCII Unit Separator (\x1f) to avoid collisions.
+  while IFS= read -r _entry; do
+    IFS=$'\x1f' read -r id raw_title display_title preview_url view_count \
+      live_status description channel duration_secs timestamp_val < <(
+      printf '%s' "$_entry" | jq -r '[
+        .id,
+        .title,
+        (.title | gsub("\""; "\\\"") | gsub("%"; "%%") | gsub("\\$"; "\\$") | sub("^.. "; "")),
+        (.thumbnails[-1].url // ""),
+        (.view_count // 0
+          | tostring | split("") | reverse | join("")
+          | gsub("(?<t>[0-9]{3})(?=[0-9])"; "\(.t),")
+          | split("") | reverse | join("")),
+        (if .live_status == "is_live" then "Online"
+         elif .live_status == "was_live" then "Offline"
+         else "False" end),
+        (.description // "null" | gsub("\""; "") | gsub("%"; "") | gsub("\n"; " ") | gsub("\u001f"; "")),
+        (.channel // ""),
+        ((.duration // 0) | tostring),
+        ((.timestamp // 0) | tostring)
+      ] | join("\u001f")' 2>/dev/null
     )
 
-    live_status=$(echo "$video" | jq '.live_status' -r)
-    [ "$live_status" = "is_live" ] && live_status='Online'
-    [ "$live_status" = "was_live" ] && live_status='Offline'
-    [ "$live_status" = "null" ] && live_status='False'
+    preview_image=$(printf '%s' "$preview_url" | generate_sha256)
 
-    description=$(echo "$video" | jq '.description' -r | sed "s/\"//g;s/%//g")
-    channel=$(echo "$video" | jq '.channel' -r)
-
-    # some duration calculations
-    duration=$(echo "$video" | jq '
-    try 
-      if .duration>=3600 then
-        if .duration/3600|floor == 1 then 
-          .duration/3600|floor|tostring + " hour" 
-        else 
-          .duration/3600|floor|tostring + " hours" 
-        end 
-      elif .duration>=60 then
-        if .duration/60|floor == 1 then 
-          .duration/60|floor|tostring + " min" 
-        else 
-          .duration/60|floor|tostring + " mins" 
-        end 
-      else 
-        if .duration == 1 then 
-          .duration/1|floor|tostring + " sec" 
-        else 
-          .duration/1|floor|tostring + " secs" 
-        end 
-      end
-    catch
-      "Unknown" 
-    ' -r)
-
-    # some date calculations
-    timestamp=$(echo "$video" | jq '.timestamp' -r)
-    relative_timestamp=$(("$CURRENT_TIME" - "$timestamp"))
+    # Timestamp (bash arithmetic — avoids extra jq fork)
+    relative_timestamp=$(("$CURRENT_TIME" - "${timestamp_val:-0}"))
     if [ "$relative_timestamp" -lt 60 ]; then
       timestamp="just now"
     elif [ "$relative_timestamp" -lt 3600 ]; then
       timestamp=$((relative_timestamp / 60))
-      if [ "$timestamp" -eq 1 ]; then
-        timestamp="$timestamp minute ago"
-      else
-        timestamp="$timestamp minutes ago"
-      fi
+      [ "$timestamp" -eq 1 ] && timestamp="$timestamp minute ago" || timestamp="$timestamp minutes ago"
     elif [ "$relative_timestamp" -lt 86400 ]; then
-      timestamp=$((relative_timestamp / 3600))
       if [ "$relative_timestamp" -lt 7200 ]; then
         timestamp="1 hour ago"
       else
@@ -483,36 +452,32 @@ generate_text_preview() {
       fi
     elif [ "$relative_timestamp" -lt 604800 ]; then
       timestamp=$((relative_timestamp / 86400))
-      if [ "$timestamp" -eq 1 ]; then
-        timestamp="$timestamp day ago"
-      else
-        timestamp="$timestamp days ago"
-      fi
+      [ "$timestamp" -eq 1 ] && timestamp="$timestamp day ago" || timestamp="$timestamp days ago"
     elif [ "$relative_timestamp" -lt 2635200 ]; then
       timestamp=$((relative_timestamp / 604800))
-      if [ "$timestamp" -eq 1 ]; then
-        timestamp="$timestamp week ago"
-      else
-        timestamp="$timestamp weeks ago"
-      fi
+      [ "$timestamp" -eq 1 ] && timestamp="$timestamp week ago" || timestamp="$timestamp weeks ago"
     elif [ "$relative_timestamp" -lt 31622400 ]; then
       timestamp=$((relative_timestamp / 2635200))
-      if [ "$timestamp" -eq 1 ]; then
-        timestamp="$timestamp month ago"
-      else
-        timestamp="$timestamp months ago"
-      fi
+      [ "$timestamp" -eq 1 ] && timestamp="$timestamp month ago" || timestamp="$timestamp months ago"
     else
       timestamp=$((relative_timestamp / 31622400))
-      if [ "$timestamp" -eq 1 ]; then
-        timestamp="$timestamp year ago"
-      else
-        timestamp="$timestamp years ago"
-      fi
+      [ "$timestamp" -eq 1 ] && timestamp="$timestamp year ago" || timestamp="$timestamp years ago"
     fi
 
-    printf "
+    # Duration (bash arithmetic)
+    if [ "${duration_secs:-0}" -ge 3600 ] 2>/dev/null; then
+      duration=$(( duration_secs / 3600 ))
+      [ "$duration" -eq 1 ] && duration="$duration hour" || duration="$duration hours"
+    elif [ "${duration_secs:-0}" -ge 60 ] 2>/dev/null; then
+      duration=$(( duration_secs / 60 ))
+      [ "$duration" -eq 1 ] && duration="$duration min" || duration="$duration mins"
+    else
+      duration="${duration_secs:-0}"
+      [ "$duration" -eq 1 ] && duration="$duration sec" || duration="${duration} secs"
+    fi
 
+    _preview_script_path="$CLI_PREVIEW_SCRIPTS_DIR/$(printf '%s' "$raw_title" | generate_sha256).txt"
+    printf "
 if [ -f \"$CLI_PREVIEW_IMAGES_CACHE_DIR/${preview_image}.jpg\" ];then fzf_preview \"$CLI_PREVIEW_IMAGES_CACHE_DIR/${preview_image}.jpg\" 2>/dev/null;
 else echo loading preview image...;
 fi
@@ -520,7 +485,7 @@ ll=1
 while [ \$ll -le \$FZF_PREVIEW_COLUMNS ];do echo -n -e \"─\" ;(( ll++ ));done;
 echo
 
-echo \"$title\"
+echo \"%s\"
 
 ll=1
 while [ \$ll -le \$FZF_PREVIEW_COLUMNS ];do echo -n -e \"─\" ;(( ll++ ));done;
@@ -534,36 +499,31 @@ ll=1
 while [ \$ll -le \$FZF_PREVIEW_COLUMNS ];do echo -n -e \"─\" ;(( ll++ ));done;
 echo
 
+! [ \"%s\" = \"null\" ] && echo -n \"%s\";
 
-! [ \"$description\" = \"null\" ] && echo -n \"%s\";
+" "$display_title" "$description" "$description" >"$_preview_script_path"
 
-" "$description" >"$CLI_PREVIEW_SCRIPTS_DIR/$(echo "$video" | jq ".title" -r | generate_sha256).txt"
-
-  done
+  done < <(echo "$1" | jq -c '.entries[]' 2>/dev/null)
 }
 
 download_preview_images() {
-  local url video filename
+  local url filename
 
   echo generating preview in the background...
   generate_text_preview "$1" &
 
-  ids="$(echo "$1" | jq '.entries[].id' -r 2>/dev/null)"
-  urls="$(echo "$1" | jq '.entries[].thumbnails[-1].url' -r 2>/dev/null)"
-  [ -z "$ids" ] && return 1
-  [ -z "$urls" ] && return 1
+  echo "$1" | jq -e '.entries | length > 0' >/dev/null 2>&1 || return 1
 
   [ -f "$CLI_PREVIEW_IMAGES_CACHE_DIR/previews.txt" ] && rm "$CLI_PREVIEW_IMAGES_CACHE_DIR/previews.txt"
-  lines="$(echo "$ids" | wc -l)"
-  for i in $(seq 1 "$lines"); do
-    video=$(echo "$1" | jq ".entries[$((i - 1))]")
-    url=$(echo "$urls" | head -n $i | tail -n 1)
-    filename=$(echo "$url" | generate_sha256)
+  while IFS= read -r url; do
+    [ -z "$url" ] && continue
+    filename=$(printf '%s' "$url" | generate_sha256)
     if ! [ -s "$CLI_PREVIEW_IMAGES_CACHE_DIR/${filename}.jpg" ]; then
-      echo "url = \"${2}${url}\"" >>"$CLI_PREVIEW_IMAGES_CACHE_DIR/previews.txt"
-      echo "output = \"$CLI_PREVIEW_IMAGES_CACHE_DIR/${filename}.jpg\"" >>"$CLI_PREVIEW_IMAGES_CACHE_DIR/previews.txt"
+      printf 'url = "%s%s"\noutput = "%s/%s.jpg"\n' \
+        "$2" "$url" "$CLI_PREVIEW_IMAGES_CACHE_DIR" "$filename" \
+        >>"$CLI_PREVIEW_IMAGES_CACHE_DIR/previews.txt"
     fi
-  done
+  done < <(echo "$1" | jq -r '.entries[].thumbnails[-1].url' 2>/dev/null)
   curl -s -K "$CLI_PREVIEW_IMAGES_CACHE_DIR/previews.txt" 2>/dev/null &
 }
 launcher_with_preview() {
@@ -650,10 +610,10 @@ prompt() {
 }
 run_yt_dlp() {
   if command -v "gum" >/dev/null 2>&1; then
-    gum spin --show-output -- yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END" $PREFERRED_BROWSER || send_notification "Failed to fetch data : ("
+    gum spin --show-output -- yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END" "${PREFERRED_BROWSER[@]}" || send_notification "Failed to fetch data : ("
   else
     echo "Loading..." >/dev/stderr
-    yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END" $PREFERRED_BROWSER || send_notification "Failed to fetch data : ("
+    yt-dlp "$1" -J --flat-playlist --extractor-args youtubetab:approximate_date --playlist-start "$PLAYLIST_START" --playlist-end "$PLAYLIST_END" "${PREFERRED_BROWSER[@]}" || send_notification "Failed to fetch data : ("
   fi
 }
 
@@ -673,6 +633,9 @@ PREVIEW_SCRIPT_FOR_VIDEOS="
     echo Loading Preview...
   fi
 "
+# Single unified channel preview script. When channels_data is not exported
+# (subscriptions view), falls back to reading subscriptions.json from disk.
+# When channels_data IS exported (explore channels view), uses it directly.
 PREVIEW_SCRIPT_FOR_CHANNELS="
 
   MAGENTA='\x1b[38;2;215;0;95m'
@@ -680,9 +643,9 @@ PREVIEW_SCRIPT_FOR_CHANNELS="
   RESET=\$(tput sgr0)
 
   if ! [ -z {} ] && ! [ {} = \"Back\" ] && ! [ {} = \"Exit\" ] && ! [ {} = \"Main Menu\" ];then
-    channels_data=\$(cat \"\$CLI_CONFIG_DIR/subscriptions.json\")
+    channels_data=\${channels_data:-\$(cat \"\$CLI_CONFIG_DIR/subscriptions.json\")}
     title=\"\$(echo {}|sed 's/\"/\\\\\\\"/g')\"
-    video=\$(echo \"\$channels_data\" | jq -r \".entries | map(select(.title == \\\"\$title\\\" )) | .[0]\" 2>/dev/null)
+    video=\$(echo \"\$channels_data\" | jq -r --arg t \"\$title\" '.entries | map(select(.title == \$t)) | .[0]' 2>/dev/null)
 
     id=\$(echo \$video |jq '.thumbnails[-1].url' -r | generate_sha256);
 
@@ -709,7 +672,6 @@ PREVIEW_SCRIPT_FOR_CHANNELS="
 
     ll=1
     while [ \$ll -le \$FZF_PREVIEW_COLUMNS ];do echo -n -e \"─\" ;(( ll++ ));done;
-    # printf \"\${MAGENTA}\${BOLD}Id: \${RESET}\$id\n\";
     printf \"\${MAGENTA}\${BOLD}Channel: \${RESET}\$channel\n\";
     printf \"\${MAGENTA}\${BOLD}Follower Count: \${RESET}\$channel_follower_count followers\n\";
 
@@ -720,54 +682,8 @@ PREVIEW_SCRIPT_FOR_CHANNELS="
     echo Loading...;
   fi;
 "
+PREVIEW_SCRIPT_FOR_CHANNELS_EXPLORER="$PREVIEW_SCRIPT_FOR_CHANNELS"
 
-PREVIEW_SCRIPT_FOR_CHANNELS_EXPLORER="
-
-  MAGENTA='\x1b[38;2;215;0;95m'
-  BOLD=\$(tput bold)
-  RESET=\$(tput sgr0)
-
-  if ! [ -z {} ] && ! [ {} = \"Back\" ] && ! [ {} = \"Exit\" ] && ! [ {} = \"Main Menu\" ];then
-    # channels_data=\$(cat \"\$CLI_CONFIG_DIR/subscriptions.json\")
-    title=\"\$(echo {}|sed 's/\"/\\\\\\\"/g')\"
-    video=\$(echo \"\$channels_data\" | jq -r \".entries | map(select(.title == \\\"\$title\\\" )) | .[0]\" 2>/dev/null)
-
-    id=\$(echo \$video | jq '.thumbnails[-1].url' -r | generate_sha256);   
-
-    channel=\$(echo \"\$video\"| jq '.channel' -r);
-
-    channel_follower_count=\$(echo \"\$video\"| jq -r '
-    .channel_follower_count
-    |tostring
-    |split(\"\")
-    |reverse
-    |join(\"\")
-    |gsub(\"(?<thousands>[0-9]\\{3})(?=[0-9])\"; \"\\(.thousands),\")
-    |split(\"\")
-    |reverse
-    |join(\"\")
-    '
-    );
-    
-    description=\$(echo \"\$video\"| jq '.description' -r);
-    
-    if [ -f \"$CLI_PREVIEW_IMAGES_CACHE_DIR/\${id}.jpg\" ];then fzf_preview \"$CLI_PREVIEW_IMAGES_CACHE_DIR/\${id}.jpg\" 2>/dev/null;
-    else echo loading preview image...;
-    fi
-
-    ll=1
-    while [ \$ll -le \$FZF_PREVIEW_COLUMNS ];do echo -n -e \"─\" ;(( ll++ ));done;
-    # printf \"\${MAGENTA}\${BOLD}Id: \${RESET}\$id\n\";
-    printf \"\${MAGENTA}\${BOLD}Channel: \${RESET}\$channel\n\";
-    printf \"\${MAGENTA}\${BOLD}Follower Count: \${RESET}\$channel_follower_count followers\n\";
-
-    ll=1
-    while [ \$ll -le \$FZF_PREVIEW_COLUMNS ];do echo -n -e \"─\" ;(( ll++ ));done;
-    ! [ \"\$description\" = \"null\" ] && echo -e \"\$description\";
-  else
-    echo Loading...;
-  fi;
-"
 PREVIEW_SCRIPT_FOR_PLAYLISTS_EXPLORER="
 
   MAGENTA='\x1b[38;2;215;0;95m'
@@ -777,7 +693,7 @@ PREVIEW_SCRIPT_FOR_PLAYLISTS_EXPLORER="
   if ! [ -z {} ] && ! [ {} = \"Back\" ] && ! [ {} = \"Exit\" ] && ! [ {} = \"Main Menu\" ];then
     # channels_data=\$(cat \"\$CLI_CONFIG_DIR/subscriptions.json\")
     title=\"\$(echo {}|sed 's/\"/\\\\\\\"/g')\"
-    video=\$(echo \"\$playlist_results\" | jq -r \".entries | map(select(.title == \\\"\$title\\\" )) | .[0]\" 2>/dev/null)
+    video=\$(echo \"\$playlist_results\" | jq -r --arg t \"\$title\" '.entries | map(select(.title == $t)) | .[0]' 2>/dev/null)
     title=\"\$(echo \"\$title\"|sed 's/^.. //g')\"
 
     id=\$(echo \$video | jq '.thumbnails[-1].url' -r | generate_sha256);   
@@ -934,10 +850,10 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
       "Download All")
         playlist_name=$(prompt "Name of the playlist" "$playlist_title")
         if [ -n "$urlForAll" ]; then
-          yt_dlp_cmd=("yt-dlp" "$urlForAll" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
+          yt_dlp_cmd=("yt-dlp" "$urlForAll" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}")
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         else
-          yt_dlp_cmd=("yt-dlp" "$url" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
+          yt_dlp_cmd=("yt-dlp" "$url" "--output" "$DOWNLOAD_DIRECTORY/videos/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}")
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         fi
         notify_info "Completed downloading of $playlist_name"
@@ -946,10 +862,10 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         playlist_name=$(prompt "Name of the playlist" "$playlist_title")
 
         if [ -n "$urlForAll" ]; then
-          yt_dlp_cmd=("yt-dlp" "$urlForAll" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
+          yt_dlp_cmd=("yt-dlp" "$urlForAll" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}")
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         else
-          yt_dlp_cmd=("yt-dlp" "$url" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" $PREFERRED_BROWSER)
+          yt_dlp_cmd=("yt-dlp" "$url" "--audio-format" "mp3" '-x' '-f' 'bestaudio/best' "--output" "$DOWNLOAD_DIRECTORY/audio/$playlist_name/%(channel)s/$enumerate_playlist%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}")
           "${yt_dlp_cmd[@]}" --download-archive "$CLI_YT_DLP_ARCHIVE/$(echo -n -- "${yt_dlp_cmd[@]}" | generate_sha256)"
         fi
         notify_info "Completed downloading of $playlist_name"
@@ -995,7 +911,10 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         current_recent_videos='{"entries":[]}'
         [ -s "$CLI_CONFIG_DIR/recent.json" ] && current_recent_videos=$(cat "$CLI_CONFIG_DIR/recent.json")
         id=$(echo "$video" | jq '.id' -r)
-        echo "$current_recent_videos" | jq "{\"entries\":[.entries[] | select(.id != \"$id\")]}|.entries+=[$(echo "$video" | jq '.title |= sub("^[0-9]+ "; "")')]" | jq "{\"entries\":.entries[-$NO_OF_RECENT:]}" >"$CLI_CONFIG_DIR/recent.json"
+        _vid_json=$(echo "$video" | jq '.title |= sub("^[0-9]+ "; "")')
+        echo "$current_recent_videos" | jq --arg id "$id" --argjson entry "$_vid_json" \
+          '{"entries":[.entries[] | select(.id != $id)]}|.entries+=[$entry]' | \
+          jq "{\"entries\":.entries[-$NO_OF_RECENT:]}" >"$CLI_CONFIG_DIR/recent.json"
         ;;
       Mix)
         local url0 _search_results
@@ -1006,10 +925,10 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         _search_results="$search_results"
         search_results=$(
           if command -v "gum" >/dev/null 2>&1; then
-            gum spin --show-output -- yt-dlp "$urlForAll" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER $PLAYLISTS_EXTRA_ARGS --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+            gum spin --show-output -- yt-dlp "$urlForAll" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
           else
             echo "Loading..." >/dev/stderr
-            yt-dlp "$urlForAll" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER $PLAYLISTS_EXTRA_ARGS --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+            yt-dlp "$urlForAll" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
           fi
         )
         playlist_explorer
@@ -1061,14 +980,19 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         current_recent_videos='{"entries":[]}'
         [ -s "$CLI_CONFIG_DIR/recent.json" ] && current_recent_videos=$(cat "$CLI_CONFIG_DIR/recent.json")
         id=$(echo "$video" | jq '.id' -r)
-        echo "$current_recent_videos" | jq "{\"entries\":[.entries[] | select(.id != \"$id\")]}|.entries+=[$(echo "$video" | jq '.title |= sub("^[0-9]+ "; "")')]" | jq "{\"entries\":.entries[-$NO_OF_RECENT:]}" >"$CLI_CONFIG_DIR/recent.json"
+        _vid_json=$(echo "$video" | jq '.title |= sub("^[0-9]+ "; "")')
+        echo "$current_recent_videos" | jq --arg id "$id" --argjson entry "$_vid_json" \
+          '{"entries":[.entries[] | select(.id != $id)]}|.entries+=[$entry]' | \
+          jq "{\"entries\":.entries[-$NO_OF_RECENT:]}" >"$CLI_CONFIG_DIR/recent.json"
         ;;
       Save)
         # For now a pseudo like feature is just as useful
         current_liked_videos='{"entries":[]}'
         [ -s "$CLI_CONFIG_DIR/saved_videos.json" ] && current_liked_videos=$(cat "$CLI_CONFIG_DIR/saved_videos.json")
         id=$(echo "$video" | jq '.id' -r)
-        echo "$current_liked_videos" | jq "{\"entries\":[.entries[] | select(.id != \"$id\")]}|.entries+=[$(echo "$video" | jq '.title |= sub("^[0-9]+ "; "")')]" >"$CLI_CONFIG_DIR/saved_videos.json"
+        _vid_json=$(echo "$video" | jq '.title |= sub("^[0-9]+ "; "")')
+        echo "$current_liked_videos" | jq --arg id "$id" --argjson entry "$_vid_json" \
+          '{"entries":[.entries[] | select(.id != $id)]}|.entries+=[$entry]' >"$CLI_CONFIG_DIR/saved_videos.json"
         ;;
       Save\ Playlist)
         # For now a pseudo like feature is just as useful
@@ -1093,7 +1017,8 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         current_liked_videos='{"entries":[]}'
         [ -s "$CLI_CONFIG_DIR/saved_videos.json" ] && current_liked_videos=$(cat "$CLI_CONFIG_DIR/saved_videos.json")
         id=$(echo "$video" | jq '.id' -r)
-        echo "$current_liked_videos" | jq "{\"entries\":[.entries[] | select(.id != \"$id\")]}" >"$CLI_CONFIG_DIR/saved_videos.json"
+        echo "$current_liked_videos" | jq --arg id "$id" \
+          '{"entries":[.entries[] | select(.id != $id)]}' >"$CLI_CONFIG_DIR/saved_videos.json"
         ;;
       "Subscribe To Channel")
         # TODO: use youtube api to enable video subscriptions
@@ -1116,12 +1041,12 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         ;;
       Download)
         video_url=$(echo "$video" | jq '.url' -r)
-        yt-dlp "$video_url" --output "$DOWNLOAD_DIRECTORY/videos/individual/%(channel)s/%(title)s.%(ext)s" $PREFERRED_BROWSER
+        yt-dlp "$video_url" --output "$DOWNLOAD_DIRECTORY/videos/individual/%(channel)s/%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}"
         notify_info "Completed downloading of $title"
         ;;
       "Download (Audio Only)")
         video_url=$(echo "$video" | jq '.url' -r)
-        yt-dlp "$video_url" -x -f 'bestaudio' --audio-format mp3 --output "$DOWNLOAD_DIRECTORY/audio/individual/%(channel)s/%(title)s.%(ext)s" $PREFERRED_BROWSER
+        yt-dlp "$video_url" -x -f 'bestaudio' --audio-format mp3 --output "$DOWNLOAD_DIRECTORY/audio/individual/%(channel)s/%(title)s.%(ext)s" "${PREFERRED_BROWSER[@]}"
         notify_info "Completed downloading of $title"
         ;;
       Back | "")
@@ -1176,7 +1101,7 @@ get_channels_data() {
     channels_data=$(cat "$CLI_CONFIG_DIR/subscriptions.json")
   else
     echo Loading subscriptions...
-    [ -n "$PREFERRED_BROWSER" ] && channels_data=$(yt-dlp "https://www.youtube.com/feed/channels" --flat-playlist $PREFERRED_BROWSER -J) || send_notification "Failed to fetch subscriptions (please set preferred browser in config)"
+    [ "${#PREFERRED_BROWSER[@]}" -gt 0 ] && channels_data=$(yt-dlp "https://www.youtube.com/feed/channels" --flat-playlist "${PREFERRED_BROWSER[@]}" -J) || send_notification "Failed to fetch subscriptions (please set preferred browser in config)"
     ! [ "$FORCE_CHANNEL_THUMBNAILS_DOWNLOAD" = "0" ] && [ "$ENABLE_PREVIEW" = "true" ] && download_preview_images "$channels_data" "https:"
     [ -n "$channels_data" ] && ! [ "$channels_data" = "null" ] && echo "$channels_data" >"$CLI_CONFIG_DIR/subscriptions.json" || send_notification "Failed to fetch subscriptions"
     clear
@@ -1185,10 +1110,10 @@ get_channels_data() {
 playlists_explorer() {
   playlist_results=$(
     if command -v "gum" >/dev/null 2>&1; then
-      gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER $PLAYLISTS_EXTRA_ARGS
+      gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS
     else
       echo "Loading..." >/dev/stderr
-      yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER $PLAYLISTS_EXTRA_ARGS
+      yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS
     fi
   )
   playlist_results=$(echo "$playlist_results" | jq "
@@ -1218,7 +1143,7 @@ playlists_explorer() {
       ;;
     esac
     playlist_title="$(echo "$playlist_title" | sed 's/"/\\"/g;s/ *$//g' | tr -d "\n")"
-    playlist="$(echo "$playlist_results" | jq ".entries|map(select(.title == \"$playlist_title\"))|.[0]")"
+    playlist="$(echo "$playlist_results" | jq --arg t "$playlist_title" '.entries|map(select(.title == $t))|.[0]')"
     playlist_title="$(echo "$playlist_title" | sed 's/^.. //g')"
     url="$(echo "$playlist" | jq '.url' -r)"
     search_results=$(run_yt_dlp "$url")
@@ -1281,7 +1206,7 @@ ${RED}󰈆${RESET}  Exit
     Subscribe)
       if ! [ -s "$CLI_CONFIG_DIR/subscriptions.json" ]; then
         if confirm "Would you like to import your youtube subscriptions first? You wont be able to do so again unless you delete subscriptions.json"; then
-          _channels_data=$(yt-dlp "https://www.youtube.com/feed/channels" --flat-playlist $PREFERRED_BROWSER -J)
+          _channels_data=$(yt-dlp "https://www.youtube.com/feed/channels" --flat-playlist "${PREFERRED_BROWSER[@]}" -J)
           echo "$_channels_data" >"$CLI_CONFIG_DIR/subscriptions.json"
         else
 
@@ -1292,7 +1217,8 @@ ${RED}󰈆${RESET}  Exit
       fi
 
       id=$(echo "$channel" | jq '.id' -r)
-      echo "$_channels_data" | jq "{\"entries\":[.entries[] | select(.id != \"$id\")]}|.entries+=[$channel]" >"$CLI_CONFIG_DIR/subscriptions.json" && notify_info "successfully subscribed" || send_notification "Failed to subscribe to channel"
+      echo "$_channels_data" | jq --arg id "$id" --argjson ch "$channel" \
+        '{"entries":[.entries[] | select(.id != $id)]}|.entries+=[$ch]' >"$CLI_CONFIG_DIR/subscriptions.json" && notify_info "successfully subscribed" || send_notification "Failed to subscribe to channel"
       ;;
     Exit)
       byebye
@@ -1437,7 +1363,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Action" | sed 's/.*  //g')"
       channel_name="$(echo "$channel_name" | sed 's/"/\\"/g;s/ *$//g' | tr -d "\n")"
       [ "$channel_name" = "Exit" ] && byebye
       [ "$channel_name" = "Main Menu" ] && break
-      channel="$(echo "$channels_data" | jq ".entries|map(select(.channel == \"$channel_name\"))|.[0]")"
+      channel="$(echo "$channels_data" | jq --arg c "$channel_name" '.entries|map(select(.channel == $c))|.[0]')"
       channels_explorer
     done
     ;;
@@ -1446,8 +1372,8 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Action" | sed 's/.*  //g')"
     while true; do
       playlist_title=$(printf "%s\nBack" "$(jq -r '.|reverse|.[].name' "$CUSTOM_PLAYLISTS")" | launcher "Select Custom Playlist To Play")
       [ "$playlist_title" = "Back" ] || [ "$playlist_title" = "" ] && break
-      url=$(jq -r ". | map(select(.name == \"$playlist_title\" )) | .[0].playlistWatchUrl" "$CUSTOM_PLAYLISTS")
-      urlForAll=$(jq -r ". | map(select(.name == \"$playlist_title\" )) | .[0].playlistUrl" "$CUSTOM_PLAYLISTS")
+      url=$(jq -r --arg n "$playlist_title" '. | map(select(.name == $n)) | .[0].playlistWatchUrl' "$CUSTOM_PLAYLISTS")
+      urlForAll=$(jq -r --arg n "$playlist_title" '. | map(select(.name == $n)) | .[0].playlistUrl' "$CUSTOM_PLAYLISTS")
       search_results=$(run_yt_dlp "$url")
       playlist_explorer
     done
@@ -1501,10 +1427,10 @@ ${RED}󰈆${RESET}  Exit
           clear
           [ -z "$search_term" ] && search_term=$(prompt "What channel would you like to explore?") && url="https://www.youtube.com/results?search_query=$search_term&sp=EgIQAg%253D%253D" && channels_data=$(
             if command -v "gum" >/dev/null 2>&1; then
-              gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+              gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
             else
               echo "Loading..." >/dev/stderr
-              yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+              yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
             fi
           ) && download_preview_images "$channels_data" "https:"
           clear
@@ -1514,7 +1440,7 @@ ${RED}󰈆${RESET}  Exit
           channel_name="$(echo "$channel_name" | sed 's/"/\\"/g;s/ *$//g' | tr -d "\n")"
           [ "$channel_name" = "Exit" ] && byebye
           [ "$channel_name" = "Back" ] || [ "$channel_name" = "" ] && break
-          channel="$(echo "$channels_data" | jq ".entries|map(select(.channel == \"$channel_name\"))|.[0]")"
+          channel="$(echo "$channels_data" | jq --arg c "$channel_name" '.entries|map(select(.channel == $c))|.[0]')"
           channels_explorer
         done
         unset channels_data
@@ -1540,7 +1466,7 @@ ${RED}󰈆${RESET}  Exit
         ;;
       New\ Custom\ Command)
         clear
-        custom_yt_dlp_cmd=$(prompt "Enter the custom yt-dlp command" "yt-dlp -J --flat-playlist --extractor-args youtubetab:approximate_date $PREFERRED_BROWSER https://youtube.com")
+        custom_yt_dlp_cmd=$(prompt "Enter the custom yt-dlp command" "yt-dlp -J --flat-playlist --extractor-args youtubetab:approximate_date ${PREFERRED_BROWSER[*]:+${PREFERRED_BROWSER[*]} }https://youtube.com")
         custom_cmds="[]"
         [ -s "$F_CUSTOM_CMDS" ] && custom_cmds=$(cat "$F_CUSTOM_CMDS")
         custom_cmd_name=$(prompt "Enter the name of the new custom command")
@@ -1555,10 +1481,10 @@ ${RED}󰈆${RESET}  Exit
         echo Running new custom command...
         search_results=$(
           if command -v "gum" >/dev/null 2>&1; then
-            gum spin --show-output --show-error -- $custom_yt_dlp_cmd || send_notification "Failed to fetch data : ("
+            gum spin --show-output --show-error -- bash -c "$custom_yt_dlp_cmd" || send_notification "Failed to fetch data : ("
           else
             echo "Loading..." >/dev/stderr
-            $custom_yt_dlp_cmd || send_notification "Failed to fetch data : ("
+            bash -c "$custom_yt_dlp_cmd" || send_notification "Failed to fetch data : ("
           fi
         )
 
@@ -1569,14 +1495,14 @@ ${RED}󰈆${RESET}  Exit
         while true; do
           custom_cmd_name=$(printf "%s\nBack" "$(jq -r '.[].name' "$F_CUSTOM_CMDS")" | launcher "Select Custom Data Loader Command To Run")
           [ "$custom_cmd_name" = "Back" ] || [ "$custom_cmd_name" = "" ] && break
-          custom_yt_dlp_cmd=$(jq -r ". | map(select(.name == \"$custom_cmd_name\" )) | .[0].cmd" "$F_CUSTOM_CMDS")
+          custom_yt_dlp_cmd=$(jq -r --arg n "$custom_cmd_name" '. | map(select(.name == $n)) | .[0].cmd' "$F_CUSTOM_CMDS")
           echo Running custom command...
           search_results=$(
             if command -v "gum" >/dev/null 2>&1; then
-              gum spin --show-output --show-error -- $custom_yt_dlp_cmd || send_notification "Failed to fetch data : ("
+              gum spin --show-output --show-error -- bash -c "$custom_yt_dlp_cmd" || send_notification "Failed to fetch data : ("
             else
               echo "Loading..." >/dev/stderr
-              $custom_yt_dlp_cmd || send_notification "Failed to fetch data : ("
+              bash -c "$custom_yt_dlp_cmd" || send_notification "Failed to fetch data : ("
             fi
           )
           playlist_explorer
@@ -1604,7 +1530,7 @@ ${RED}󰈆${RESET}  Exit
       Sync\ YouTube\ Subscriptions)
         if confirm "This will erase your local subs, proceed?"; then
           echo "Syncing subscriptions..."
-          [ -n "$PREFERRED_BROWSER" ] && channels_data=$(yt-dlp "https://www.youtube.com/feed/channels" --flat-playlist $PREFERRED_BROWSER -J) || send_notification "Failed to fetch subscriptions (please set preferred browser in config"
+          [ "${#PREFERRED_BROWSER[@]}" -gt 0 ] && channels_data=$(yt-dlp "https://www.youtube.com/feed/channels" --flat-playlist "${PREFERRED_BROWSER[@]}" -J) || send_notification "Failed to fetch subscriptions (please set preferred browser in config"
           download_preview_images "$channels_data" "https:"
           [ -n "$channels_data" ] && ! [ "$channels_data" = "null" ] && echo "$channels_data" >"$CLI_CONFIG_DIR/subscriptions.json" && notify_info "successfully imported yt subs" || send_notification "Failed to fetch subscriptions"
         else

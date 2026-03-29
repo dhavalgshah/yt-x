@@ -38,11 +38,22 @@ The entire application lives in `yt-x`. Major sections:
 
 ## Testing
 
-There is no automated test suite. Manual testing is required:
+Automated tests live in `tests/` using [bats](https://github.com/bats-core/bats-core).
 
-1. Run `yt-x` and exercise the changed code paths interactively.
-2. Run `shellcheck yt-x` and resolve all warnings before committing.
-3. Test on the platforms relevant to the change (Linux, macOS, Android/Termux) if possible.
+**Run all tests:**
+```bash
+bats tests/
+```
+
+**Test infrastructure:**
+- `YT_X_TEST_MODE=1` guard at the bottom of `yt-x` prevents startup when sourced
+- `tests/helpers/load_functions.bash` — sources `yt-x` and exposes all functions
+- `tests/helpers/mock_commands.bash` — stub helpers for external tools
+- Array variables (`PREFERRED_BROWSER`, etc.) cannot be exported — use `PREFERRED_BROWSER=()` directly in test `setup()`, not `export PREFERRED_BROWSER=""`
+
+**Before committing:** `shellcheck yt-x` must pass with zero warnings.
+
+**Manual testing** is still required for interactive paths (fzf/rofi selectors, mpv playback, yt-dlp downloads).
 
 ## Making Changes
 
@@ -53,7 +64,41 @@ There is no automated test suite. Manual testing is required:
 5. Print user-facing strings through `echo` / `printf`; never leak raw yt-dlp JSON to the user.
 6. Respect the `PRETTY_PRINT` flag when adding any colored output (`$RED`, `$GREEN`, `$CYAN`, etc.).
 
-## Common Pitfalls
+## Agent Efficiency Guidelines
+
+### DO — Maximise work per turn
+
+| Rule | Why |
+|------|-----|
+| **Batch all reads in one turn.** View every file you need before writing any code. | Each turn has overhead; reading 5 files in 1 turn is 4× faster than 5 turns. |
+| **Batch all writes in one turn.** Group edits to different files in a single response. | Parallel `edit` calls are independent and safe. |
+| **Chain bash commands with `&&` or `;`.** `grep … && wc -l` is one tool call, not two. | Reduces round-trips and context accumulation. |
+| **Read ranges, not whole large files.** Use `view_range` or targeted `grep -n` on files >200 lines. | The 1900-line `yt-x` is ~80 KB; full cat overflows inline output. |
+| **Use `bash -n yt-x` before committing.** Catches syntax errors without running the script. | Fast sanity check, costs nothing. |
+| **Run the full test suite in one command.** `bats tests/` covers all suites. | Never run individual suites unless diagnosing a specific failure. |
+| **Make all independent tool calls in parallel.** Read files A, B, C simultaneously if they don't depend on each other. | Eliminates sequential blocking. |
+
+### DON'T — Avoid token and request waste
+
+| Anti-pattern | Better approach |
+|--------------|-----------------|
+| Reading a file in small ranges one at a time | Decide which ranges you need, request them all at once |
+| Asking clarifying questions when context is clear | Act on what you know; note assumptions in commit message |
+| Committing after every line changed | Commit at logical boundaries (one per issue/feature) |
+| Running `shellcheck` separately from tests | `bats tests/ && shellcheck yt-x` in one bash call |
+| Spinning up sub-agents for single-file edits | Use direct `edit` tool; agents add overhead for simple tasks |
+| Checking `git status` after every edit | Check once before committing the batch |
+| Using `cat yt-x` to read the whole file | Use `grep -n pattern yt-x` or `view` with `view_range` |
+| Creating plan files for < 5-step tasks | Work in memory; write `plan.md` only for multi-phase work |
+
+### Context budget heuristic
+
+- **Explore phase:** stay under 20% of context window (reads + greps)
+- **Implementation phase:** batch edits to use up to 70% of context window before committing
+- **Verification phase:** run tests + shellcheck, fix any failures in the same turn where possible
+- **Commit:** one `git add -A && git commit` call with full message; push in the same command
+
+
 
 - **`%` in printf strings** — always quote dynamic content or use `%s` to avoid `printf` errors (see commit `4880033`).
 - **Disown semantics** — the `DISOWN_STREAMING_PROCESS` flag forks mpv/vlc; any change to playback spawning must handle both the disowned and non-disowned paths.

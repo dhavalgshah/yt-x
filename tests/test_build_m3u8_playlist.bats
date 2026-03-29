@@ -8,7 +8,7 @@ setup() {
   export HOME="${BATS_TMPDIR}/home_$$"
   mkdir -p "$HOME/.config/yt-x" "$HOME/.cache/yt-x"
   export AUTO_LOADED_EXTENSIONS=""
-  export PREFERRED_BROWSER=""
+  PREFERRED_BROWSER=()
 
   yt-dlp() { :; }; export -f yt-dlp
   fzf()    { :; }; export -f fzf
