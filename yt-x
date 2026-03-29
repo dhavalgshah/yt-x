@@ -1833,6 +1833,9 @@ load_config
 force_update=0
 CURRENT_TIME=$(date +%s)
 
+# Allow the test suite to source this file without executing the CLI
+[ "${YT_X_TEST_MODE:-0}" = "1" ] && return 0
+
 while [ $# -gt 0 ]; do
   case "$1" in
   -h | --help)
