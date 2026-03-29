@@ -385,6 +385,23 @@ generate_sha256() {
   fi
 }
 
+build_m3u8_playlist() {
+  # $1 = source URL, $2 = output .m3u8 file path
+  # TODO(#19): PREFERRED_BROWSER needs to become an array; keep unquoted for now
+  local src_url="$1" dest="$2"
+  local _mix_data _entry _title _url
+  # shellcheck disable=SC2086
+  _mix_data=$(yt-dlp "$src_url" --flat-playlist -J $PREFERRED_BROWSER)
+  [ -z "$_mix_data" ] && send_notification "Failed to get playlist data" && return 1
+  echo '#EXTM3U' > "$dest"
+  while IFS= read -r _entry; do
+    _title=$(echo "$_entry" | jq '.title' -r)
+    _url=$(echo "$_entry" | jq '.url' -r)
+    printf '#EXTINF:-1,%s\n%s\n\n' "$_title" "$_url" >> "$dest"
+  done < <(echo "$_mix_data" | jq -c '.entries[]')
+  return 0
+}
+
 generate_text_preview() {
   [ -z "$search_results" ] && return 1
   ids="$(echo "$1" | jq '.entries[].id' -r 2>/dev/null)"
@@ -866,54 +883,13 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
             urlForAll="${urlForAll/&start_radio=1/}"
             cached_playlist="$CLI_AUTO_GEN_PLAYLISTS/$(generate_sha256 "$urlForAll").m3u8"
             if ! [ -s "$cached_playlist" ]; then
-              _mix_data=$(yt-dlp "$urlForAll" --flat-playlist -J)
-              [ -z "$_mix_data" ] && send_notification "Failed to get mix data" && continue
-              echo '#EXTM3U' >>"$cached_playlist"
-
-              lines="$(echo "$_mix_data" | jq '.entries[].url' -r | wc -l)"
-              for i in $(seq 1 "$lines"); do
-                local _video
-                local _title
-                local _channel
-                local _url
-                _video=$(echo "$_mix_data" | jq ".entries[$((i - 1))]")
-                _title=$(echo "$_video" | jq ".title" -r)
-                _channel=$(echo "$_video" | jq '.channel' -r)
-                _url=$(echo "$_video" | jq '.url' -r)
-                echo "#EXTINF:-1,$_title" >>"$cached_playlist"
-                echo "$_url" >>"$cached_playlist"
-                # echo "#EXTALB:Album Name" >>"$cached_playlist"
-                # echo "#EXTGENRE:Genre" >>"$cached_playlist"
-                # echo "#EXTGRP:Group Name" >>"$cached_playlist"
-                echo "" >>"$cached_playlist"
-              done
+              build_m3u8_playlist "$urlForAll" "$cached_playlist" || continue
             fi
             "$MPV_CMD" "$cached_playlist"
           else
             cached_playlist="$CLI_AUTO_GEN_PLAYLISTS/$(generate_sha256 "$url").m3u8"
-
             if ! [ -s "$cached_playlist" ]; then
-              _mix_data=$(yt-dlp "$url" --flat-playlist -J)
-              [ -z "$_mix_data" ] && send_notification "Failed to get mix data" && continue
-              echo '#EXTM3U' >>"$cached_playlist"
-
-              lines="$(echo "$_mix_data" | jq '.entries[].url' -r | wc -l)"
-              for i in $(seq 1 "$lines"); do
-                local _video
-                local _title
-                local _channel
-                local _url
-                _video=$(echo "$_mix_data" | jq ".entries[$((i - 1))]")
-                _title=$(echo "$_video" | jq ".title" -r)
-                _channel=$(echo "$_video" | jq '.channel' -r)
-                _url=$(echo "$_video" | jq '.url' -r)
-                echo "#EXTINF:-1,$_title" >>"$cached_playlist"
-                echo "$_url" >>"$cached_playlist"
-                # echo "#EXTALB:Album Name" >>"$cached_playlist"
-                # echo "#EXTGENRE:Genre" >>"$cached_playlist"
-                # echo "#EXTGRP:Group Name" >>"$cached_playlist"
-                echo "" >>"$cached_playlist"
-              done
+              build_m3u8_playlist "$url" "$cached_playlist" || continue
             fi
             "$MPV_CMD" "$cached_playlist"
           fi
@@ -929,55 +905,14 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         if echo "$url" | grep -q "list=RD" || echo "$urlForAll" | grep -q "list=RD" || [ "$(echo "$search_results" | jq 'has("uploader_url") | not')" = "true" ]; then
           if [ -n "$urlForAll" ]; then
             cached_playlist="$CLI_AUTO_GEN_PLAYLISTS/$(generate_sha256 "$urlForAll").m3u8"
-
             if ! [ -s "$cached_playlist" ]; then
-              _mix_data=$(yt-dlp "$urlForAll" --flat-playlist -J)
-              [ -z "$_mix_data" ] && send_notification "Failed to get mix data" && continue
-              echo '#EXTM3U' >>"$cached_playlist"
-
-              lines="$(echo "$_mix_data" | jq '.entries[].url' -r | wc -l)"
-              for i in $(seq 1 "$lines"); do
-                local _video
-                local _title
-                local _channel
-                local _url
-                _video=$(echo "$_mix_data" | jq ".entries[$((i - 1))]")
-                _title=$(echo "$_video" | jq ".title" -r)
-                _channel=$(echo "$_video" | jq '.channel' -r)
-                _url=$(echo "$_video" | jq '.url' -r)
-                echo "#EXTINF:-1,$_title" >>"$cached_playlist"
-                echo "$_url" >>"$cached_playlist"
-                # echo "#EXTALB:Album Name" >>"$cached_playlist"
-                # echo "#EXTGENRE:Genre" >>"$cached_playlist"
-                # echo "#EXTGRP:Group Name" >>"$cached_playlist"
-                echo "" >>"$cached_playlist"
-              done
+              build_m3u8_playlist "$urlForAll" "$cached_playlist" || continue
             fi
             "$MPV_CMD" "$cached_playlist" --no-video --force-window=no
           else
             cached_playlist="$CLI_AUTO_GEN_PLAYLISTS/$(generate_sha256 "$url").m3u8"
             if ! [ -s "$cached_playlist" ]; then
-              _mix_data=$(yt-dlp "$url" --flat-playlist -J)
-              [ -z "$_mix_data" ] && send_notification "Failed to get mix data" && continue
-              echo '#EXTM3U' >>"$cached_playlist"
-
-              lines="$(echo "$_mix_data" | jq '.entries[].url' -r | wc -l)"
-              for i in $(seq 1 "$lines"); do
-                local _video
-                local _title
-                local _channel
-                local _url
-                _video=$(echo "$_mix_data" | jq ".entries[$((i - 1))]")
-                _title=$(echo "$_video" | jq ".title" -r)
-                _channel=$(echo "$_video" | jq '.channel' -r)
-                _url=$(echo "$_video" | jq '.url' -r)
-                echo "#EXTINF:-1,$_title" >>"$cached_playlist"
-                echo "$_url" >>"$cached_playlist"
-                # echo "#EXTALB:Album Name" >>"$cached_playlist"
-                # echo "#EXTGENRE:Genre" >>"$cached_playlist"
-                # echo "#EXTGRP:Group Name" >>"$cached_playlist"
-                echo "" >>"$cached_playlist"
-              done
+              build_m3u8_playlist "$url" "$cached_playlist" || continue
             fi
             "$MPV_CMD" "$cached_playlist" --no-video --force-window=no
           fi
@@ -1026,27 +961,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
           video_id=$(echo "$video" | jq '.id' -r | sed 's/RD//g')
           cached_playlist="$CLI_AUTO_GEN_PLAYLISTS/$(generate_sha256 "https://www.youtube.com/watch?v=${video_id}&list=RD$video_id").m3u8"
           if ! [ -s "$cached_playlist" ]; then
-            _mix_data=$(yt-dlp "https://www.youtube.com/watch?v=${video_id}&list=RD$video_id" --flat-playlist -J)
-            [ -z "$_mix_data" ] && send_notification "Failed to get mix data" && continue
-            echo '#EXTM3U' >>"$cached_playlist"
-
-            lines="$(echo "$_mix_data" | jq '.entries[].url' -r | wc -l)"
-            for i in $(seq 1 "$lines"); do
-              local _video
-              local _title
-              local _channel
-              local _url
-              _video=$(echo "$_mix_data" | jq ".entries[$((i - 1))]")
-              _title=$(echo "$_video" | jq ".title" -r)
-              _channel=$(echo "$_video" | jq '.channel' -r)
-              _url=$(echo "$_video" | jq '.url' -r)
-              echo "#EXTINF:-1,$_title" >>"$cached_playlist"
-              echo "$_url" >>"$cached_playlist"
-              # echo "#EXTALB:Album Name" >>"$cached_playlist"
-              # echo "#EXTGENRE:Genre" >>"$cached_playlist"
-              # echo "#EXTGRP:Group Name" >>"$cached_playlist"
-              echo "" >>"$cached_playlist"
-            done
+            build_m3u8_playlist "https://www.youtube.com/watch?v=${video_id}&list=RD$video_id" "$cached_playlist" || continue
           fi
           "$MPV_CMD" "$cached_playlist" --no-video --force-window=no
         else
@@ -1112,27 +1027,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
           cached_playlist="$CLI_AUTO_GEN_PLAYLISTS/$(generate_sha256 "https://www.youtube.com/watch?v=${video_id}&list=RD$video_id").m3u8"
 
           if ! [ -s "$cached_playlist" ]; then
-            _mix_data=$(yt-dlp "https://www.youtube.com/watch?v=${video_id}&list=RD$video_id" --flat-playlist -J)
-            [ -z "$_mix_data" ] && send_notification "Failed to get mix data" && continue
-            echo '#EXTM3U' >>"$cached_playlist"
-
-            lines="$(echo "$_mix_data" | jq '.entries[].url' -r | wc -l)"
-            for i in $(seq 1 "$lines"); do
-              local _video
-              local _title
-              local _channel
-              local _url
-              _video=$(echo "$_mix_data" | jq ".entries[$((i - 1))]")
-              _title=$(echo "$_video" | jq ".title" -r)
-              _channel=$(echo "$_video" | jq '.channel' -r)
-              _url=$(echo "$_video" | jq '.url' -r)
-              echo "#EXTINF:-1,$_title" >>"$cached_playlist"
-              echo "$_url" >>"$cached_playlist"
-              # echo "#EXTALB:Album Name" >>"$cached_playlist"
-              # echo "#EXTGENRE:Genre" >>"$cached_playlist"
-              # echo "#EXTGRP:Group Name" >>"$cached_playlist"
-              echo "" >>"$cached_playlist"
-            done
+            build_m3u8_playlist "https://www.youtube.com/watch?v=${video_id}&list=RD$video_id" "$cached_playlist" || continue
           fi
           "$MPV_CMD" "$cached_playlist"
         else
