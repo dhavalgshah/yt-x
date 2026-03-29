@@ -1308,6 +1308,7 @@ ${RED}󰈆${RESET}  Exit
 }
 main() {
   SHELL="bash"
+  while true; do
   clear
   case "${CMD_ACTION}" in
   Search)
@@ -1418,12 +1419,12 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Action" | sed 's/.*  //g')"
     playlists_explorer
     ;;
   "Saved Videos")
-    ! [ -s "$CLI_CONFIG_DIR/saved_videos.json" ] && echo No saved videos && sleep "$NOTIFICATION_DURATION" && main
+    ! [ -s "$CLI_CONFIG_DIR/saved_videos.json" ] && echo No saved videos && sleep "$NOTIFICATION_DURATION" && continue
     search_results=$(jq '{"entries":.entries|reverse}' "$CLI_CONFIG_DIR/saved_videos.json")
     playlist_explorer
     ;;
   Recent)
-    ! [ -s "$CLI_CONFIG_DIR/recent.json" ] && echo No recent videos && sleep "$NOTIFICATION_DURATION" && main
+    ! [ -s "$CLI_CONFIG_DIR/recent.json" ] && echo No recent videos && sleep "$NOTIFICATION_DURATION" && continue
     search_results=$(jq '{"entries":.entries|reverse}' "$CLI_CONFIG_DIR/recent.json")
     playlist_explorer
     ;;
@@ -1441,7 +1442,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Action" | sed 's/.*  //g')"
     done
     ;;
   Custom\ Playlists)
-    ! [ -s "$CUSTOM_PLAYLISTS" ] && echo "You don't have any custom playlists. Create them here: <$CUSTOM_PLAYLISTS>" && sleep "$NOTIFICATION_DURATION" && main
+    ! [ -s "$CUSTOM_PLAYLISTS" ] && echo "You don't have any custom playlists. Create them here: <$CUSTOM_PLAYLISTS>" && sleep "$NOTIFICATION_DURATION" && continue
     while true; do
       playlist_title=$(printf "%s\nBack" "$(jq -r '.|reverse|.[].name' "$CUSTOM_PLAYLISTS")" | launcher "Select Custom Playlist To Play")
       [ "$playlist_title" = "Back" ] || [ "$playlist_title" = "" ] && break
@@ -1529,7 +1530,7 @@ ${RED}󰈆${RESET}  Exit
       Search\ History)
         clear
         while true; do
-          ! [ -s "$CLI_CACHE_DIR/search_history.txt" ] && echo "No search history or disabed" && sleep "$NOTIFICATION_DURATION" && main
+          ! [ -s "$CLI_CACHE_DIR/search_history.txt" ] && echo "No search history or disabed" && sleep "$NOTIFICATION_DURATION" && break
           search_term="$(printf "$(tac "$CLI_CACHE_DIR/search_history.txt")\nBack" | launcher "Search for" | jq -Rr '@uri')"
           [ "$search_term" = "Back" ] || [ "$search_term" = "" ] && break
           url="https://www.youtube.com/results?search_query=$search_term&sp=EgIQAQ%253D%253D"
@@ -1631,7 +1632,7 @@ ${RED}󰈆${RESET}  Exit
     sleep "$NOTIFICATION_DURATION"
     ;;
   esac
-  main
+  done
 }
 
 usage() {
