@@ -1,0 +1,65 @@
+name: Refactor Task
+description: A code-quality, performance, or security improvement (no behaviour change)
+labels: ["refactor", "task", "roadmap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for atomic refactoring tasks.
+        Each task should map to **one logical commit** and one PR.
+
+  - type: input
+    id: area
+    attributes:
+      label: Affected area / function(s)
+      placeholder: "playlist_explorer, download_preview_images"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of change
+      options:
+        - Deduplication
+        - Performance
+        - Security hardening
+        - Bug fix (logic error)
+        - Code organisation
+        - Missing feature / stub
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: Current behaviour / problem
+      description: What is wrong with the current code?
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposed
+    attributes:
+      label: Proposed change
+      description: What should the new code look like / do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: How do we know this task is done?
+      value: |
+        - [ ] shellcheck passes with no new warnings
+        - [ ] Existing behaviour unchanged (manual test)
+        - [ ] One atomic commit following conventional commits format
+    validations:
+      required: true
+
+  - type: input
+    id: epic
+    attributes:
+      label: Parent epic issue number
+      placeholder: "#12"

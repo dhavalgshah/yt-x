@@ -1,0 +1,52 @@
+name: Epic
+description: A high-level refactoring goal made up of multiple atomic tasks
+labels: ["epic", "roadmap"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        An **Epic** is an abstract goal. It is never closed by a single PR —
+        it closes when all its child task issues are resolved.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Goal
+      description: One sentence description of what this epic achieves
+    validations:
+      required: true
+
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation / problem statement
+      description: Why does this need to happen?
+    validations:
+      required: true
+
+  - type: textarea
+    id: tasks
+    attributes:
+      label: Child tasks
+      description: List each atomic task issue (fill in numbers as you create them)
+      value: |
+        - [ ] #?
+        - [ ] #?
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+      description: What will NOT be changed as part of this epic?
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Definition of done
+      description: How do we know the epic is complete?
+      value: |
+        - [ ] All child tasks closed
+        - [ ] shellcheck passes on final state
+        - [ ] No behaviour regressions (manual smoke test)
