@@ -925,10 +925,10 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Media Action" | sed 's/.  //g')"
         _search_results="$search_results"
         search_results=$(
           if command -v "gum" >/dev/null 2>&1; then
-            gum spin --show-output -- yt-dlp "$urlForAll" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+            gum spin --show-output -- yt-dlp "$urlForAll" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" "$PLAYLISTS_EXTRA_ARGS" --playlist-start 1 --playlist-end "$NO_OF_SEARCH_RESULTS"
           else
             echo "Loading..." >/dev/stderr
-            yt-dlp "$urlForAll" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+            yt-dlp "$urlForAll" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" "$PLAYLISTS_EXTRA_ARGS" --playlist-start 1 --playlist-end "$NO_OF_SEARCH_RESULTS"
           fi
         )
         playlist_explorer
@@ -1110,10 +1110,10 @@ get_channels_data() {
 playlists_explorer() {
   playlist_results=$(
     if command -v "gum" >/dev/null 2>&1; then
-      gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS
+      gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" "$PLAYLISTS_EXTRA_ARGS"
     else
       echo "Loading..." >/dev/stderr
-      yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" $PLAYLISTS_EXTRA_ARGS
+      yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" "$PLAYLISTS_EXTRA_ARGS"
     fi
   )
   playlist_results=$(echo "$playlist_results" | jq "
@@ -1328,7 +1328,7 @@ ${RED}󰈆${RESET}  Exit" | launcher "Select Action" | sed 's/.*  //g')"
       esac
     fi
     [ "$SEARCH_HISTORY" = "true" ] && [ -s "$CLI_CACHE_DIR/search_history.txt" ] && history=$(grep --invert-match "^$search_term\$" "$CLI_CACHE_DIR/search_history.txt")
-    [ "$SEARCH_HISTORY" = "true" ] && [ -s "$CLI_CACHE_DIR/search_history.txt" ] && echo "$history" >$CLI_CACHE_DIR/search_history.txt
+    [ "$SEARCH_HISTORY" = "true" ] && [ -s "$CLI_CACHE_DIR/search_history.txt" ] && echo "$history" >"$CLI_CACHE_DIR/search_history.txt"
     [ "$SEARCH_HISTORY" = "true" ] && echo "$search_term" >>"$CLI_CACHE_DIR/search_history.txt"
     search_term=$(echo "$search_term" | jq -Rr '@uri')
     url="https://www.youtube.com/results?search_query=$search_term&sp=$sp"
@@ -1427,10 +1427,10 @@ ${RED}󰈆${RESET}  Exit
           clear
           [ -z "$search_term" ] && search_term=$(prompt "What channel would you like to explore?") && url="https://www.youtube.com/results?search_query=$search_term&sp=EgIQAg%253D%253D" && channels_data=$(
             if command -v "gum" >/dev/null 2>&1; then
-              gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+              gum spin --show-output -- yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" --playlist-start 1 --playlist-end "$NO_OF_SEARCH_RESULTS"
             else
               echo "Loading..." >/dev/stderr
-              yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" --playlist-start 1 --playlist-end $NO_OF_SEARCH_RESULTS
+              yt-dlp "$url" -J --flat-playlist --extractor-args youtubetab:approximate_date "${PREFERRED_BROWSER[@]}" --playlist-start 1 --playlist-end "$NO_OF_SEARCH_RESULTS"
             fi
           ) && download_preview_images "$channels_data" "https:"
           clear
@@ -1723,11 +1723,11 @@ complete -c $CLI_NAME --no-files --short-option f --long-option fish --descripti
       ;;
     -b | --bash)
       # TODO: write bash completions
-      echo Contribute to $CLI_NAME by writing bash completions
+      echo Contribute to "$CLI_NAME" by writing bash completions
       ;;
     -z | --zsh)
       # TODO: write zsh completions
-      echo Contribute to $CLI_NAME by writing zsh completions
+      echo Contribute to "$CLI_NAME" by writing zsh completions
       ;;
     -h | --help)
       echo "\
