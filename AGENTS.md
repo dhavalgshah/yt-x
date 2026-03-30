@@ -66,37 +66,109 @@ bats tests/
 
 ## Agent Efficiency Guidelines
 
-### DO — Maximise work per turn
+### Core Principle: Read Everything Once, Work Efficiently
 
-| Rule | Why |
-|------|-----|
-| **Batch all reads in one turn.** View every file you need before writing any code. | Each turn has overhead; reading 5 files in 1 turn is 4× faster than 5 turns. |
-| **Batch all writes in one turn.** Group edits to different files in a single response. | Parallel `edit` calls are independent and safe. |
-| **Chain bash commands with `&&` or `;`.** `grep … && wc -l` is one tool call, not two. | Reduces round-trips and context accumulation. |
-| **Read ranges, not whole large files.** Use `view_range` or targeted `grep -n` on files >200 lines. | The 1900-line `yt-x` is ~80 KB; full cat overflows inline output. |
-| **Use `bash -n yt-x` before committing.** Catches syntax errors without running the script. | Fast sanity check, costs nothing. |
-| **Run the full test suite in one command.** `bats tests/` covers all suites. | Never run individual suites unless diagnosing a specific failure. |
-| **Make all independent tool calls in parallel.** Read files A, B, C simultaneously if they don't depend on each other. | Eliminates sequential blocking. |
+Start every task by identifying all files you'll need, then read them together in parallel. This single discipline saves 4–10× the overhead.
 
-### DON'T — Avoid token and request waste
+### Reading Strategy
 
-| Anti-pattern | Better approach |
-|--------------|-----------------|
-| Reading a file in small ranges one at a time | Decide which ranges you need, request them all at once |
-| Asking clarifying questions when context is clear | Act on what you know; note assumptions in commit message |
-| Committing after every line changed | Commit at logical boundaries (one per issue/feature) |
-| Running `shellcheck` separately from tests | `bats tests/ && shellcheck yt-x` in one bash call |
-| Spinning up sub-agents for single-file edits | Use direct `edit` tool; agents add overhead for simple tasks |
-| Checking `git status` after every edit | Check once before committing the batch |
-| Using `cat yt-x` to read the whole file | Use `grep -n pattern yt-x` or `view` with `view_range` |
-| Creating plan files for < 5-step tasks | Work in memory; write `plan.md` only for multi-phase work |
+**Gather first, act second:**
+1. List all files needed before requesting anything
+2. Read them all in parallel (one response with multiple `view` calls)
+3. Use targeted `grep` before full reads for large files
+4. Keep the context you've gathered; reference it as you work
 
-### Context budget heuristic
+**For large files (>200 lines):**
+- Use `grep -n "pattern"` first to find sections
+- Then `view_range [start, end]` to read only what you need
+- Example: `grep -n "search_term" yt-x` → identify lines → `view [line_range]`
 
-- **Explore phase:** stay under 20% of context window (reads + greps)
-- **Implementation phase:** batch edits to use up to 70% of context window before committing
-- **Verification phase:** run tests + shellcheck, fix any failures in the same turn where possible
-- **Commit:** one `git add -A && git commit` call with full message; push in the same command
+### Batching Work
+
+**Reads:** Request multiple files in one response block
+```bash
+view file1.sh
+view file2.sh  
+view file3.sh
+# All in one response = 1 request, not 3
+```
+
+**Writes:** Group edits to different files together
+```bash
+# Multiple edit calls in one response = batched efficiency
+edit file1 (change A)
+edit file1 (change B)
+edit file2 (change C)
+# All apply, then test once
+```
+
+**Commands:** Chain related bash operations
+```bash
+# Instead of: run grep, then run wc-l separately
+# Do this:
+grep pattern file && wc -l file && awk '{print $1}' file
+# One bash call, not three
+```
+
+**Verification:** Run all tests together, not per-file
+```bash
+# After changes:
+bats tests/ && shellcheck yt-x && git status
+# One call = full verification
+```
+
+### Work Pattern Example
+
+**Task:** Fix 3 bugs in yt-x and add tests
+
+**Efficient approach (1-2 turns):**
+- **Turn 1:** Read yt-x, tests/, README in parallel → grep to locate bugs → understand all three at once
+- **Turn 2:** Edit all 3 bugs, add 3 tests, run full suite, commit
+
+**Less efficient approach (8+ turns):**
+- Turn 1: View yt-x to find bug 1
+- Turn 2: Edit bug 1
+- Turn 3: View test file
+- Turn 4: Add test for bug 1
+- Turn 5: View yt-x again for bug 2
+- ... (repeat for bugs 2 and 3)
+- Final: Run tests and commit
+
+The first approach is faster because it gathers context once, then acts decisively.
+
+### Context Budget Guidelines
+
+- **Exploration:** Keep reads and greps under 20% of context (gather what you need, then work)
+- **Implementation:** Batch edits to use up to 70% before committing (maximize changes per run)
+- **Verification:** Run full tests + linting once per batch (don't verify piecemeal)
+- **Commit:** One `git add -A && git commit` with full message; push once at the end
+
+### Time-Saving Patterns
+
+| Scenario | Better approach |
+|----------|-----------------|
+| Need to understand multiple files | Read all in parallel in one response |
+| Making changes to multiple files | Batch all edits, verify once |
+| Testing after changes | `bats tests/ && shellcheck yt-x` in one call |
+| Large file, specific pattern | `grep -n pattern file` then `view [range]` |
+| Git workflow | `git add && git commit && git push` in one bash call |
+| Unsure which file to change | Ask thoughtful questions upfront (costs one turn, saves eight) |
+
+### When to Use Sub-Agents
+
+Use background agents only for:
+- Long-running operations (tests, builds) while main agent continues exploration
+- Complex multi-step research with unavoidable context switching
+- Tasks explicitly requiring parallel investigation
+
+For single-file edits, quick tests, or simple verification — use direct tools in the main agent. Sub-agents add overhead.
+
+### Commit Strategy
+
+When batching changes, commit logically:
+- **Related changes:** One commit with all related fixes
+- **Unrelated changes:** Separate commits, push once at the end
+- **Always:** Full message explaining WHY, not WHAT (readers can see WHAT in the diff)
 
 
 
